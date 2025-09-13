@@ -27,7 +27,7 @@ function App() {
   const paperParamRaw = useMemo(() => getQueryParam('paper'), [])
   const paperUrl = useMemo(() => normalizeArxivUrl(paperParamRaw), [paperParamRaw])
   const [status, setStatus] = useState('idle') // idle|loading|done|error
-  const [summary, setSummary] = useState('')
+  const [summary, setSummary] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -42,7 +42,7 @@ function App() {
         if (!res.ok) throw new Error(`Backend error ${res.status}`)
         const data = await res.json()
         if (data.error) throw new Error(data.error)
-        setSummary(data.summary)
+        setSummary(data)
         setStatus('done')
       } catch (e) {
         setError(e.message || 'Failed to summarize')
@@ -72,11 +72,8 @@ function App() {
           </div>
           {status === 'loading' && <div className="loading">Summarizing…</div>}
           {status === 'error' && <div className="error">{error}</div>}
-          {status === 'done' && (
-            <div>
-              <div className="label">Summary</div>
-              <SummaryView text={summary} />
-            </div>
+          {status === 'done' && summary && (
+            <StructuredSummaryView data={summary} />
           )}
         </div>
       )}
@@ -89,9 +86,110 @@ function App() {
 
 export default App
 
-function SummaryView({ text }) {
-  const html = useMemo(() => renderMarkdownish(text || ''), [text])
-  return <div className="summary markdown" dangerouslySetInnerHTML={{ __html: html }} />
+function StructuredSummaryView({ data }) {
+  const {
+    title,
+    arxiv_abs_url,
+    arxiv_pdf_url,
+    one_liner,
+    problems_solved = [],
+    key_innovations = [],
+    collaboration_type,
+    total_authors,
+    authors = [],
+    takeaways = [],
+    notes = [],
+  } = data || {}
+
+  const shareText = buildShareText({ title, arxiv_abs_url, one_liner, problems_solved, key_innovations, takeaways })
+  const shareMail = `mailto:?subject=${encodeURIComponent(`[Paper Summary] ${title || 'arXiv'}`)}&body=${encodeURIComponent(shareText)}`
+  const shareLinkedIn = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(arxiv_abs_url || arxiv_pdf_url || window.location.href)}`
+
+  return (
+    <div>
+      <div className="row">
+        <div>
+          <div className="label">Title</div>
+          <div>{title || 'Unknown title'}</div>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={() => copyToClipboard(shareText)}>Copy</button>
+          <a className="button" href={shareMail}>Email</a>
+          <a className="button" href={shareLinkedIn} target="_blank" rel="noreferrer">LinkedIn</a>
+        </div>
+      </div>
+
+      <div className="row" style={{ marginTop: '0.75rem' }}>
+        <div>
+          <div className="label">Links</div>
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            {arxiv_abs_url && <a href={arxiv_abs_url} target="_blank" rel="noreferrer">arXiv Abs</a>}
+            {arxiv_pdf_url && <a href={arxiv_pdf_url} target="_blank" rel="noreferrer">PDF</a>}
+          </div>
+        </div>
+        <div>
+          <div className="label">Authors</div>
+          <div>{total_authors ?? 0} {total_authors === 1 ? 'author' : 'authors'}</div>
+        </div>
+      </div>
+
+      <Section title="One-line Summary">
+        <p>{one_liner}</p>
+      </Section>
+      <Section title="Problems Solved" items={problems_solved} />
+      <Section title="Key Innovations" items={key_innovations} />
+      <Section title="Collaboration Type">
+        <p>{collaboration_type || 'Unknown'}</p>
+        {authors?.length ? <details><summary>Authors</summary><ul>{authors.map((a,i)=>(<li key={i}>{a}</li>))}</ul></details> : null}
+      </Section>
+      <Section title="Takeaways" items={takeaways} />
+      {notes?.length ? <Section title="Things to Note" items={notes} /> : null}
+    </div>
+  )
+}
+
+function Section({ title, items, children }) {
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      <div className="label">{title}</div>
+      {items ? (
+        <ul className="summary">
+          {items.map((it, idx) => <li key={idx}>{it}</li>)}
+        </ul>
+      ) : (
+        <div className="summary">{children}</div>
+      )}
+    </div>
+  )
+}
+
+function buildShareText({ title, arxiv_abs_url, one_liner, problems_solved, key_innovations, takeaways }) {
+  const lines = []
+  if (title) lines.push(`Title: ${title}`)
+  if (arxiv_abs_url) lines.push(`Link: ${arxiv_abs_url}`)
+  if (one_liner) lines.push(`\nOne-liner: ${one_liner}`)
+  if (problems_solved?.length) {
+    lines.push('\nProblems solved:')
+    problems_solved.forEach(b => lines.push(`- ${b}`))
+  }
+  if (key_innovations?.length) {
+    lines.push('\nKey innovations:')
+    key_innovations.forEach(b => lines.push(`- ${b}`))
+  }
+  if (takeaways?.length) {
+    lines.push('\nTakeaways:')
+    takeaways.forEach(b => lines.push(`- ${b}`))
+  }
+  return lines.join('\n')
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    // Soft feedback without alert spam
+  } catch (e) {
+    console.error('Copy failed', e)
+  }
 }
 
 function escapeHtml(s) {
