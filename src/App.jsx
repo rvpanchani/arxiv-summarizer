@@ -123,9 +123,16 @@ function StructuredSummaryView({ data }) {
     affiliation_breakdown,
   } = data || {}
 
-  const shareText = buildShareText({ title, arxiv_abs_url, one_liner, problems_solved, key_innovations, takeaways })
+  const appShareUrl = useMemo(() => {
+    const base = window.location.origin + window.location.pathname
+    if (arxiv_abs_url) return `${base}?paper=${encodeURIComponent(arxiv_abs_url)}`
+    if (arxiv_pdf_url) return `${base}?paper=${encodeURIComponent(arxiv_pdf_url)}`
+    return window.location.href
+  }, [arxiv_abs_url, arxiv_pdf_url])
+
+  const shareText = buildShareText({ title, arxiv_abs_url: appShareUrl, one_liner, problems_solved, key_innovations, takeaways }) + `\n\nInteractive summary: ${appShareUrl}`
   const shareMail = `mailto:?subject=${encodeURIComponent(`[Paper Summary] ${title || 'arXiv'}`)}&body=${encodeURIComponent(shareText)}`
-  const shareLinkedIn = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(arxiv_abs_url || arxiv_pdf_url || window.location.href)}`
+  const shareLinkedIn = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(appShareUrl)}`
 
   const hasCode = !!resources?.code?.length
   const hasVideo = !!resources?.video?.length
@@ -142,30 +149,44 @@ function StructuredSummaryView({ data }) {
   }, [authors_affiliations])
 
   return (
-    <div className="grid">
-        <div className="card section" style={{ gridColumn: '1 / -1' }}>
-          <h2>Title & Access</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '.6rem' }}>
-            <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>{title || 'Unknown title'}</div>
-            <div className="chips">
-              <span className={`chip ${hasCode ? 'ok' : 'none'}`}>Code {hasCode ? '✓' : '—'}</span>
-              <span className={`chip ${hasCheckpoints ? 'ok' : 'none'}`}>Model {hasCheckpoints ? '✓' : '—'}</span>
-              <span className={`chip ${hasVideo ? 'ok' : 'none'}`}>Video {hasVideo ? '✓' : '—'}</span>
-              <span className="chip none">Authors {total_authors ?? 0}</span>
-              {collaboration_type && <span className="chip warn">{collaboration_type}</span>}
+    <div className="grid condensed">
+        <div className="card section hero" style={{ gridColumn: '1 / -1' }}>
+          <div className="hero-top">
+            <div className="hero-main">
+              <div className="paper-title">{title || 'Unknown title'}</div>
+              <div className="chips">
+                <span className={`chip ${hasCode ? 'ok' : 'none'}`}>Code {hasCode ? '✓' : '—'}</span>
+                <span className={`chip ${hasCheckpoints ? 'ok' : 'none'}`}>Model {hasCheckpoints ? '✓' : '—'}</span>
+                <span className={`chip ${hasVideo ? 'ok' : 'none'}`}>Video {hasVideo ? '✓' : '—'}</span>
+                <span className="chip none">Authors {total_authors ?? 0}</span>
+                {collaboration_type && <span className="chip warn">{collaboration_type}</span>}
+              </div>
             </div>
-            <div className="buttons-inline">
-              {arxiv_abs_url && <a className="button" href={arxiv_abs_url} target="_blank" rel="noreferrer">Abstract</a>}
-              {arxiv_pdf_url && <a className="button" href={arxiv_pdf_url} target="_blank" rel="noreferrer">PDF</a>}
-              <button onClick={() => copyToClipboard(shareText)}>Copy Summary</button>
-              <a className="button" href={shareMail}>Email</a>
-              <a className="button" href={shareLinkedIn} target="_blank" rel="noreferrer">Share</a>
+            {/* Scores moved to dedicated row below for clarity */}
+          </div>
+          <div className="hero-actions buttons-inline">
+            {arxiv_abs_url && <a className="button" href={arxiv_abs_url} target="_blank" rel="noreferrer">Abstract</a>}
+            {arxiv_pdf_url && <a className="button" href={arxiv_pdf_url} target="_blank" rel="noreferrer">PDF</a>}
+            <button onClick={() => copyToClipboard(shareText)} title="Copy summary text">Copy</button>
+            <a className="button" href={shareMail}>Email</a>
+            <a className="button share-linkedin" href={shareLinkedIn} target="_blank" rel="noreferrer" title="Share on LinkedIn">
+              <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M4.98 3.5a2.5 2.5 0 1 1 0 5.001 2.5 2.5 0 0 1 0-5ZM3 9h4v12H3zM14.25 9c-2.071 0-3.25 1.138-3.25 1.138V9H7v12h4V14.5s0-2.5 2.25-2.5c1.5 0 1.5 1.75 1.5 2.625V21h4v-6.125C18.75 11.25 17.5 9 14.25 9Z"/></svg>
+              Share
+            </a>
+          </div>
+          <div className="one-liner"><span className="label">One-Liner</span><p>{one_liner}</p></div>
+        </div>
+
+        {(overall_score != null || reliability_score != null || applicability_score != null) && (
+          <div className="card section scores-row" style={{ gridColumn: '1 / -1' }}>
+            <h2>Adoption & Quality Scores</h2>
+            <div className="scores large" title="Derived from reliability (method soundness) & applicability (ease of adoption, openness)">
+              {overall_score != null && <Score label="Overall" value={overall_score} />}
+              {reliability_score != null && <Score label="Reliability" value={reliability_score} />}
+              {applicability_score != null && <Score label="Applicability" value={applicability_score} />}
             </div>
           </div>
-          <div className="divider" />
-          <div className="label">One-Liner</div>
-          <p style={{ fontSize: '.95rem', marginTop: '.25rem' }}>{one_liner}</p>
-        </div>
+        )}
 
         {simplified_summary && (
           <div className="card section" style={{ gridColumn: '1 / -1' }}>
@@ -174,27 +195,27 @@ function StructuredSummaryView({ data }) {
           </div>
         )}
         {practical_problem && (
-          <div className="card section">
-            <h2>Practical Problem</h2>
+          <div className="card section group-context">
+            <h2>Real-World Problem</h2>
             <p>{practical_problem}</p>
           </div>
         )}
-        <div className="card section">
-          <h2>Problems Solved</h2>
+        <div className="card section group-context">
+          <h2>Pain Points Addressed</h2>
           <List items={problems_solved} />
         </div>
-        <div className="card section">
+        <div className="card section group-solution">
           <h2>Key Innovations</h2>
           <List items={key_innovations} />
         </div>
         {impact_potential?.length ? (
-          <div className="card section">
+          <div className="card section group-impact">
             <h2>Impact Potential</h2>
             <List items={impact_potential} />
           </div>
         ) : null}
         {use_cases?.length ? (
-          <div className="card section">
+          <div className="card section group-impact">
             <h2>Use Cases</h2>
             <List items={use_cases} />
           </div>
@@ -219,12 +240,12 @@ function StructuredSummaryView({ data }) {
             </table>
           </div>
         ) : null}
-        <div className="card section">
+        <div className="card section group-outcomes">
           <h2>Takeaways</h2>
           <List items={takeaways} />
         </div>
         {notes?.length ? (
-          <div className="card section">
+          <div className="card section group-outcomes">
             <h2>Limitations / Notes</h2>
             <List items={notes} />
           </div>
@@ -239,16 +260,7 @@ function StructuredSummaryView({ data }) {
             </div>
           </div>
         )}
-        {(overall_score != null || reliability_score != null || applicability_score != null) && (
-          <div className="card section">
-            <h2>Scores</h2>
-            <div className="scores">
-              {overall_score != null && <Score label="Overall" value={overall_score} />}
-              {reliability_score != null && <Score label="Reliability" value={reliability_score} />}
-              {applicability_score != null && <Score label="Applicability" value={applicability_score} />}
-            </div>
-          </div>
-        )}
+        {/* Scores now moved to hero section */}
         {authors_affiliations?.length ? (
           <div className="card section" style={{ gridColumn: '1 / -1' }}>
             <h2>Authorship & Collaboration</h2>
@@ -260,6 +272,9 @@ function StructuredSummaryView({ data }) {
                 <span className="chip">Total {total_authors}</span>
               </div>
             )}
+            {groupedAffiliations.length && groupedAffiliations.every(g=>g[0]==='Unspecified') ? (
+              <div className="notice" style={{ fontSize: '.65rem' }}>Detailed affiliations not exposed via arXiv API for this paper (often only present inside the PDF header). Parsing PDF is disabled for performance. </div>
+            ) : null}
             <details>
               <summary>Affiliation Groups</summary>
               <div className="aff-groups" style={{ marginTop: '.6rem' }}>

@@ -27,13 +27,49 @@ html, body, #root { background: var(--bg); color: var(--text); min-height: 100%;
 /* Layout */
 .container { display: flex; flex-direction: column; gap: 1.25rem; }
 .grid { display: grid; gap: 1.25rem; }
+.grid.condensed { gap: 0.9rem; }
+@media (min-width: 860px) {
+	.grid.condensed { grid-template-columns: repeat(auto-fit,minmax(250px,1fr)); }
+	.grid.condensed .hero { grid-column: 1 / -1; }
+	.grid.condensed .hero-top { flex-direction: row; }
+}
 @media (min-width: 960px) { .grid.two { grid-template-columns: 1fr 1fr; } }
 
 /* Cards */
 .card { background: var(--gradient-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1.1rem 1.1rem 1.15rem; position: relative; box-shadow: var(--shadow-sm); }
 .card.header { background: radial-gradient(circle at 30% 10%, #1f2933, #12171d 65%); }
 .card.section { backdrop-filter: blur(6px); }
-.card h2 { margin: 0 0 .6rem; font-size: 1rem; letter-spacing: 0.5px; font-weight: 600; display: flex; align-items: center; gap: .5rem; color: var(--text-dim); text-transform: uppercase; }
+.card h2 { margin: 0 0 .55rem; font-size: .85rem; letter-spacing: 0.6px; font-weight: 600; display: flex; align-items: center; gap: .5rem; color: var(--text-dim); text-transform: uppercase; position: relative; padding-left: .65rem; }
+.card h2::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 4px; height: 70%; border-radius: 2px; background: linear-gradient(var(--accent),#22d3ee); opacity: .6; }
+
+/* Hero (title+scores) */
+.hero { display: flex; flex-direction: column; gap: .6rem; padding: 1rem 1rem 1.05rem; }
+.hero-top { display: flex; flex-direction: column; gap: .85rem; justify-content: space-between; }
+.hero-main { display: flex; flex-direction: column; gap: .55rem; }
+.paper-title { font-size: clamp(1.05rem, 2.4vw, 1.5rem); font-weight: 600; line-height: 1.15; }
+.hero-actions { margin-top: .2rem; }
+.one-liner { margin-top: .4rem; display: flex; flex-direction: column; gap: .2rem; }
+.scores.inline { align-self: flex-start; background: #121921; padding: .5rem .6rem; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.scores.inline .score { font-size: .6rem; padding: .25rem .45rem; background: #18222b; border-radius: var(--radius-full); }
+.scores-row { display: flex; flex-direction: column; gap: .6rem; }
+.scores-row .scores.large { display: flex; gap: .7rem; flex-wrap: wrap; }
+.scores-row .score { font-size: .7rem; }
+
+/* Conceptual grouping color accents */
+.group-context h2::before { background: linear-gradient(#6366f1,#3b82f6); }
+.group-solution h2::before { background: linear-gradient(#10b981,#34d399); }
+.group-impact h2::before { background: linear-gradient(#f59e0b,#fbbf24); }
+.group-outcomes h2::before { background: linear-gradient(#ec4899,#f472b6); }
+
+/* Visual cue accent on each section */
+.card.section { overflow: hidden; }
+.card.section::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(120deg,rgba(59,130,246,0.08),transparent 38%); opacity: 0; transition: opacity .25s ease; }
+.card.section:hover::after { opacity: 1; }
+
+/* LinkedIn Share button */
+.share-linkedin { background: linear-gradient(135deg,#0a66c2,#0a5cad); color: #fff; border-color: #0a66c2; }
+.share-linkedin:hover { background: linear-gradient(135deg,#0b70d6,#0a66c2); }
+.share-linkedin svg { flex-shrink: 0; }
 
 /* Typography */
 h1 { font-size: clamp(1.9rem, 3vw, 2.4rem); line-height: 1.05; margin: 0 0 .5rem; font-weight: 600; background: linear-gradient(90deg,#fff,#b5cbe6 55%,#89a5c2); -webkit-background-clip: text; color: transparent; }
@@ -75,7 +111,7 @@ table.benchmarks tbody tr:hover { background: #1c242d; }
 .score { font-weight: 600; }
 .score.meter { position: relative; padding-left: 2.4rem; }
 .score-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 2rem; display: flex; align-items: center; }
-.score-bar span { display: block; width: 100%; height: 6px; border-radius: 3px; background: linear-gradient(90deg,#334155,#1e2934); overflow: hidden; position: relative; }
+.score-bar span { display: block; width: 100%; height: 6px; border-radius: 3px; background: linear-gradient(90deg,#334155,#1e2934); overflow: hidden; position: relative; box-shadow: inset 0 0 0 1px #0d1115; }
 .score-bar span::after { content: ""; position: absolute; top:0; left:0; bottom:0; width: var(--pct); background: linear-gradient(90deg,#3b82f6,#22d3ee); border-radius: 3px; box-shadow: 0 0 0 1px #0d1115; }
 
 /* Resource availability */
