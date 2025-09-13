@@ -26,6 +26,10 @@ type ArxivMeta = {
   authors: string[]
   absUrl: string | null
   pdfUrl: string | null
+  authorsDetailed: { name: string; affiliation?: string | null; category: 'Academia' | 'Industry' | 'Other' }[]
+  codeLinks: string[]
+  videoLinks: string[]
+  modelLinks: string[]
 }
 
 async function fetchArxivMeta(url: string): Promise<ArxivMeta> {
@@ -35,6 +39,10 @@ async function fetchArxivMeta(url: string): Promise<ArxivMeta> {
   let authors: string[] = []
   let absUrl: string | null = null
   let pdfUrl: string | null = null
+  let authorsDetailed: { name: string; affiliation?: string | null; category: 'Academia' | 'Industry' | 'Other' }[] = []
+  const codeLinks: string[] = []
+  const videoLinks: string[] = []
+  const modelLinks: string[] = []
 
   if (id) {
     const apiUrl = `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(id)}`
@@ -48,8 +56,18 @@ async function fetchArxivMeta(url: string): Promise<ArxivMeta> {
     const s = xml.match(/<summary>([\s\S]*?)<\/summary>/i)
     if (s) abstract = s[1].replace(/\s+/g, ' ').trim()
     // Extract authors
-    const authorMatches = [...xml.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi)]
-    authors = authorMatches.map(m => m[1].replace(/\s+/g, ' ').trim()).filter(Boolean)
+    const authorBlocks = [...xml.matchAll(/<author>([\s\S]*?)<\/author>/gi)]
+    authorBlocks.forEach(block => {
+      const raw = block[1]
+      const nameMatch = raw.match(/<name>([\s\S]*?)<\/name>/i)
+      const affMatch = raw.match(/<arxiv:affiliation[^>]*>([\s\S]*?)<\/arxiv:affiliation>/i)
+      const name = nameMatch ? nameMatch[1].replace(/\s+/g, ' ').trim() : null
+      if (name) {
+        authors.push(name)
+        const affiliation = affMatch ? affMatch[1].replace(/\s+/g, ' ').trim() : null
+        authorsDetailed.push({ name, affiliation, category: categorizeAffiliation(affiliation) })
+      }
+    })
     absUrl = `https://arxiv.org/abs/${id}`
     pdfUrl = `https://arxiv.org/pdf/${id}.pdf`
   } else {
@@ -68,12 +86,24 @@ async function fetchArxivMeta(url: string): Promise<ArxivMeta> {
         const m2 = html.match(/<blockquote class="abstract[^"]*">\s*<span[^>]*>.*?<\/span>([\s\S]*?)<\/blockquote>/i)
         if (m2) abstract = m2[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
         const aMatches = [...html.matchAll(/<div class="authors">[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/gi)]
-        if (aMatches.length) authors = aMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean)
+        if (aMatches.length) {
+          authors = aMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean)
+          authorsDetailed = authors.map(name => ({ name, affiliation: null, category: 'Other' }))
+        }
+        // Resource links
+        const linkMatches = [...html.matchAll(/<a[^>]+href="(https?:[^"#]+)"/gi)]
+        linkMatches.forEach(m => {
+          const link = m[1].replace(/&amp;/g, '&').trim()
+            .replace(/#.*$/, '')
+          if (/github\.com\//i.test(link)) codeLinks.push(link)
+          else if (/youtu(be)?\.com|vimeo\.com/i.test(link)) videoLinks.push(link)
+          else if (/huggingface\.co\//i.test(link)) modelLinks.push(link)
+        })
       }
     } catch {}
   }
 
-  return { id, title, abstract, authors, absUrl, pdfUrl }
+  return { id, title, abstract, authors, absUrl, pdfUrl, authorsDetailed, codeLinks, videoLinks, modelLinks }
 }
 
 type StructuredSummary = {
@@ -89,24 +119,65 @@ type StructuredSummary = {
   authors?: string[]
   takeaways: string[]
   notes?: string[]
+  simplified_summary?: string
+  practical_problem?: string
+  impact_potential?: string[]
+  use_cases?: string[]
+  benchmarks?: { metric: string; value?: string; baseline?: string; improvement?: string }[]
+  resources?: { code?: string[]; video?: string[]; checkpoints?: string[] }
+  reliability_score?: number
+  applicability_score?: number
+  overall_score?: number
+  authors_affiliations?: { name: string; affiliation?: string | null; category: string }[]
+  affiliation_breakdown?: { Academia: number; Industry: number; Other: number }
 }
 
 function buildPrompt(meta: ArxivMeta): string {
   const authorsTxt = meta.authors.length ? `Authors: ${meta.authors.join(', ')}.` : ''
+  const affiliationsTxt = meta.authorsDetailed?.length ? `Affiliations: ${meta.authorsDetailed.map(a => `${a.name}${a.affiliation ? ' (' + a.affiliation + ')' : ''}`).join('; ')}.` : ''
   const titleTxt = meta.title ? `Title: ${meta.title}.` : ''
   const abstractTxt = meta.abstract ? `Abstract: ${meta.abstract}` : ''
+  const resourcesPrompt = [
+    meta.codeLinks.length ? `Code links observed: ${meta.codeLinks.join(', ')}` : null,
+    meta.videoLinks.length ? `Video links observed: ${meta.videoLinks.join(', ')}` : null,
+    meta.modelLinks.length ? `Model/checkpoint links observed: ${meta.modelLinks.join(', ')}` : null,
+  ].filter(Boolean).join('\n')
   return [
-    'Summarize the paper below in a compact, practical, non-academic tone.',
-    'Return ONLY valid JSON matching this schema, no prose and no Markdown code fences:',
-    '{"one_liner": string, "problems_solved": string[], "key_innovations": string[], "collaboration_type": "Academia-only"|"Industry-only"|"Academia-Industry"|"Unknown", "takeaways": string[], "notes": string[] }',
-    'Rules:',
-    '- Keep bullets short (<= 12 words), actionable, simple language.',
-    '- Prefer 3-6 items per list. Avoid redundancy.',
-    '- Infer collaboration_type from any clues (affiliations, context); use Unknown if unclear.',
+    'You are an assistant creating a practitioner-friendly structured summary of a research paper.',
+    'Return ONLY strict JSON (no markdown fences) matching this full schema:',
+    '{"one_liner": string, "simplified_summary": string, "practical_problem": string, "problems_solved": string[], "key_innovations": string[], "impact_potential": string[], "use_cases": string[], "benchmarks": [{"metric": string, "value": string, "baseline": string, "improvement": string}], "collaboration_type": "Academia-only"|"Industry-only"|"Academia-Industry"|"Unknown", "takeaways": string[], "notes": string[], "resources": {"code": string[], "video": string[], "checkpoints": string[]}, "reliability_score": number, "applicability_score": number, "overall_score": number }',
+    'Definitions & Rules:',
+    '- one_liner: <= 25 words plain language value prop.',
+    '- simplified_summary: Plain, non-academic explanation (<=300 words) covering what, how, why it matters.',
+    '- practical_problem: Real-world problem addressed in one concise sentence.',
+    '- problems_solved: 3-6 concrete pain points; each <= 12 words.',
+    '- key_innovations: 3-6 technical or methodological novelties.',
+    '- impact_potential: 3-5 bullets broader potential (societal/economic/scientific).',
+    '- use_cases: 3-6 practical scenarios.',
+    '- benchmarks: Only include reported quantitative results. {metric, value, baseline, improvement}. No invention. [] if none.',
+    '- collaboration_type: Infer from affiliations; Academia-Industry if >=1 of each.',
+    '- takeaways: 3-6 actionable distilled lessons.',
+    '- notes: Limitations/risks (0-5).',
+    '- resources.*: Only URLs given or clearly present; no hallucinated domains.',
+    '- reliability_score: 0-100 (soundness: clarity, evidence, benchmarks, openness).',
+    '- applicability_score: 0-100 (ease of adoption, code/resources, clarity).',
+    '- overall_score: Weighted 0-100 (0.6*reliability + 0.4*applicability).',
+    '- NEVER fabricate benchmarks or links. Use empty collections if absent.',
+    '- Keep wording neutral, concise, concrete. No hype.',
     titleTxt,
     authorsTxt,
+    affiliationsTxt,
     abstractTxt,
+    resourcesPrompt,
   ].filter(Boolean).join('\n')
+}
+
+function categorizeAffiliation(aff?: string | null): 'Academia' | 'Industry' | 'Other' {
+  if (!aff) return 'Other'
+  const a = aff.toLowerCase()
+  if (/(univ|institute|college|school|laborator|centre|center)/.test(a)) return 'Academia'
+  if (/(inc|corp|labs|technolog|systems|company|ltd|llc|google|microsoft|meta|ibm|amazon|nvidia|openai|deepmind)/.test(a)) return 'Industry'
+  return 'Other'
 }
 
 async function summarizeWithGemini(apiKey: string, meta: ArxivMeta): Promise<StructuredSummary> {
@@ -140,26 +211,45 @@ async function summarizeWithGemini(apiKey: string, meta: ArxivMeta): Promise<Str
   if (fenced) jsonStr = fenced[1].trim()
   try {
     const parsed = JSON.parse(jsonStr)
+    const rel = typeof parsed.reliability_score === 'number' ? parsed.reliability_score : null
+    const app = typeof parsed.applicability_score === 'number' ? parsed.applicability_score : null
+    const overall = typeof parsed.overall_score === 'number' ? parsed.overall_score : (rel != null && app != null ? Math.round(rel * 0.6 + app * 0.4) : null)
+    const affiliationBreakdown = meta.authorsDetailed.reduce((acc, a) => { (acc as any)[a.category] = ((acc as any)[a.category] || 0) + 1; return acc }, { Academia: 0, Industry: 0, Other: 0 } as { Academia: number; Industry: number; Other: number })
     const base: StructuredSummary = {
       one_liner: parsed.one_liner || '',
+      simplified_summary: parsed.simplified_summary || undefined,
+      practical_problem: parsed.practical_problem || undefined,
       problems_solved: Array.isArray(parsed.problems_solved) ? parsed.problems_solved : [],
       key_innovations: Array.isArray(parsed.key_innovations) ? parsed.key_innovations : [],
-      collaboration_type: parsed.collaboration_type || 'Unknown',
+      impact_potential: Array.isArray(parsed.impact_potential) ? parsed.impact_potential : [],
+      use_cases: Array.isArray(parsed.use_cases) ? parsed.use_cases : [],
+      benchmarks: Array.isArray(parsed.benchmarks) ? parsed.benchmarks : [],
+      collaboration_type: parsed.collaboration_type || inferCollabType(meta.authorsDetailed),
       takeaways: Array.isArray(parsed.takeaways) ? parsed.takeaways : [],
       notes: Array.isArray(parsed.notes) ? parsed.notes : [],
+      resources: {
+        code: Array.isArray(parsed?.resources?.code) ? parsed.resources.code : meta.codeLinks,
+        video: Array.isArray(parsed?.resources?.video) ? parsed.resources.video : meta.videoLinks,
+        checkpoints: Array.isArray(parsed?.resources?.checkpoints) ? parsed.resources.checkpoints : meta.modelLinks,
+      },
+      reliability_score: rel ?? undefined,
+      applicability_score: app ?? undefined,
+      overall_score: overall ?? undefined,
       total_authors: meta.authors.length,
       authors: meta.authors,
+      authors_affiliations: meta.authorsDetailed,
+      affiliation_breakdown: affiliationBreakdown,
       title: meta.title || undefined,
       arxiv_id: meta.id,
       arxiv_abs_url: meta.absUrl,
       arxiv_pdf_url: meta.pdfUrl,
     }
-    // Minimal sanity defaults
     if (!base.one_liner) base.one_liner = meta.abstract ? meta.abstract.slice(0, 150) + '…' : 'Summary unavailable.'
     return base
   } catch {
     // Fallback: build simple structure from text
     const bullets = text.split(/\n+/).map((s: string) => s.replace(/^[-*\d.\s]+/, '').trim()).filter(Boolean)
+    const affiliationBreakdown = meta.authorsDetailed.reduce((acc, a) => { (acc as any)[a.category] = ((acc as any)[a.category] || 0) + 1; return acc }, { Academia: 0, Industry: 0, Other: 0 } as { Academia: number; Industry: number; Other: number })
     return {
       title: meta.title || undefined,
       arxiv_id: meta.id,
@@ -173,8 +263,23 @@ async function summarizeWithGemini(apiKey: string, meta: ArxivMeta): Promise<Str
       authors: meta.authors,
       takeaways: bullets.slice(7, 10),
       notes: bullets.slice(10, 12),
+      simplified_summary: meta.abstract?.slice(0, 300) + '…',
+      benchmarks: [],
+      resources: { code: meta.codeLinks, video: meta.videoLinks, checkpoints: meta.modelLinks },
+      authors_affiliations: meta.authorsDetailed,
+      affiliation_breakdown: affiliationBreakdown,
     }
   }
+}
+
+function inferCollabType(list: { category: 'Academia' | 'Industry' | 'Other' }[]): 'Academia-only' | 'Industry-only' | 'Academia-Industry' | 'Unknown' {
+  if (!list.length) return 'Unknown'
+  const hasAcad = list.some(a => a.category === 'Academia')
+  const hasInd = list.some(a => a.category === 'Industry')
+  if (hasAcad && hasInd) return 'Academia-Industry'
+  if (hasAcad) return 'Academia-only'
+  if (hasInd) return 'Industry-only'
+  return 'Unknown'
 }
 
 export default {

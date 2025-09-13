@@ -24,8 +24,10 @@ function normalizeArxivUrl(url) {
 }
 
 function App() {
-  const paperParamRaw = useMemo(() => getQueryParam('paper'), [])
-  const paperUrl = useMemo(() => normalizeArxivUrl(paperParamRaw), [paperParamRaw])
+  const initialParam = useMemo(() => getQueryParam('paper') || '', [])
+  const [input, setInput] = useState(initialParam)
+  const [activePaper, setActivePaper] = useState(initialParam)
+  const paperUrl = useMemo(() => normalizeArxivUrl(activePaper), [activePaper])
   const [status, setStatus] = useState('idle') // idle|loading|done|error
   const [summary, setSummary] = useState(null)
   const [error, setError] = useState('')
@@ -44,46 +46,55 @@ function App() {
         if (data.error) throw new Error(data.error)
         setSummary(data)
         setStatus('done')
+        const nextUrl = new URL(window.location.href)
+        nextUrl.searchParams.set('paper', activePaper)
+        window.history.replaceState({}, '', nextUrl.toString())
       } catch (e) {
         setError(e.message || 'Failed to summarize')
         setStatus('error')
       }
     }
     run()
-  }, [paperUrl])
+  }, [paperUrl, activePaper])
+
+  function submit(e) {
+    e.preventDefault()
+    if (!input.trim()) return
+    setActivePaper(input.trim())
+  }
 
   return (
-    <div className="container">
-      <h1>arXiv Summarizer</h1>
-      <p>Use <code>?paper=</code> with an arXiv URL. Example:</p>
-      <pre>
-        {`${window.location.origin}${window.location.pathname}?paper=https://arxiv.org/abs/2506.01667`}
-      </pre>
-      {!paperParamRaw && (
-        <div className="notice">Add a <code>paper</code> param to begin.</div>
+    <div className="container fade-in">
+      <div className="card header">
+        <h1>arXiv Clarity</h1>
+        <p className="muted">Turn dense research papers into actionable insight: plain-language summary, innovation breakdown, benchmarks, resources & adoption readiness scores.</p>
+        <form className="paper-form" onSubmit={submit}>
+          <input
+            type="text"
+            placeholder="Paste arXiv URL or ID (e.g. 2506.01667)"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            aria-label="Paper URL or ID"
+          />
+          <button type="submit" disabled={status === 'loading'}>{status === 'loading' ? 'Summarizing…' : 'Summarize'}</button>
+        </form>
+        {!activePaper && (
+          <pre>{`${window.location.origin}${window.location.pathname}?paper=https://arxiv.org/abs/2506.01667`}</pre>
+        )}
+        {error && <div className="error" style={{ marginTop: '.5rem' }}>{error}</div>}
+      </div>
+      {status === 'done' && summary && (
+        <StructuredSummaryView data={summary} key={summary.arxiv_id || 'summary'} />
       )}
-      {paperParamRaw && (
-        <div className="card">
-          <div className="row">
-            <div>
-              <div className="label">Paper</div>
-              <a href={paperUrl} target="_blank" rel="noreferrer">{paperUrl}</a>
-            </div>
-          </div>
-          {status === 'loading' && <div className="loading">Summarizing…</div>}
-          {status === 'error' && <div className="error">{error}</div>}
-          {status === 'done' && summary && (
-            <StructuredSummaryView data={summary} />
-          )}
-        </div>
+      {status === 'loading' && (
+        <div className="card section" aria-busy="true">Processing paper… extracting metadata & generating structured insight.</div>
       )}
       <footer>
-        <small>Summaries generated via server-side Gemini API.</small>
+        <div>Summaries generated via server-side Gemini API. No user text stored.</div>
       </footer>
     </div>
   )
 }
-
 export default App
 
 function StructuredSummaryView({ data }) {
@@ -99,66 +110,187 @@ function StructuredSummaryView({ data }) {
     authors = [],
     takeaways = [],
     notes = [],
+    simplified_summary,
+    practical_problem,
+    impact_potential = [],
+    use_cases = [],
+    benchmarks = [],
+    resources = {},
+    reliability_score,
+    applicability_score,
+    overall_score,
+    authors_affiliations = [],
+    affiliation_breakdown,
   } = data || {}
 
   const shareText = buildShareText({ title, arxiv_abs_url, one_liner, problems_solved, key_innovations, takeaways })
   const shareMail = `mailto:?subject=${encodeURIComponent(`[Paper Summary] ${title || 'arXiv'}`)}&body=${encodeURIComponent(shareText)}`
   const shareLinkedIn = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(arxiv_abs_url || arxiv_pdf_url || window.location.href)}`
 
+  const hasCode = !!resources?.code?.length
+  const hasVideo = !!resources?.video?.length
+  const hasCheckpoints = !!resources?.checkpoints?.length
+
+  const groupedAffiliations = useMemo(() => {
+    const groups = {}
+    authors_affiliations.forEach(a => {
+      const key = (a.affiliation || 'Unspecified').trim()
+      groups[key] = groups[key] || []
+      groups[key].push(a.name)
+    })
+    return Object.entries(groups).sort((a,b) => b[1].length - a[1].length)
+  }, [authors_affiliations])
+
   return (
-    <div>
-      <div className="row">
-        <div>
-          <div className="label">Title</div>
-          <div>{title || 'Unknown title'}</div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => copyToClipboard(shareText)}>Copy</button>
-          <a className="button" href={shareMail}>Email</a>
-          <a className="button" href={shareLinkedIn} target="_blank" rel="noreferrer">LinkedIn</a>
-        </div>
-      </div>
-
-      <div className="row" style={{ marginTop: '0.75rem' }}>
-        <div>
-          <div className="label">Links</div>
-          <div style={{ display: 'flex', gap: '1rem' }}>
-            {arxiv_abs_url && <a href={arxiv_abs_url} target="_blank" rel="noreferrer">arXiv Abs</a>}
-            {arxiv_pdf_url && <a href={arxiv_pdf_url} target="_blank" rel="noreferrer">PDF</a>}
+    <div className="grid">
+        <div className="card section" style={{ gridColumn: '1 / -1' }}>
+          <h2>Title & Access</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.6rem' }}>
+            <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>{title || 'Unknown title'}</div>
+            <div className="chips">
+              <span className={`chip ${hasCode ? 'ok' : 'none'}`}>Code {hasCode ? '✓' : '—'}</span>
+              <span className={`chip ${hasCheckpoints ? 'ok' : 'none'}`}>Model {hasCheckpoints ? '✓' : '—'}</span>
+              <span className={`chip ${hasVideo ? 'ok' : 'none'}`}>Video {hasVideo ? '✓' : '—'}</span>
+              <span className="chip none">Authors {total_authors ?? 0}</span>
+              {collaboration_type && <span className="chip warn">{collaboration_type}</span>}
+            </div>
+            <div className="buttons-inline">
+              {arxiv_abs_url && <a className="button" href={arxiv_abs_url} target="_blank" rel="noreferrer">Abstract</a>}
+              {arxiv_pdf_url && <a className="button" href={arxiv_pdf_url} target="_blank" rel="noreferrer">PDF</a>}
+              <button onClick={() => copyToClipboard(shareText)}>Copy Summary</button>
+              <a className="button" href={shareMail}>Email</a>
+              <a className="button" href={shareLinkedIn} target="_blank" rel="noreferrer">Share</a>
+            </div>
           </div>
+          <div className="divider" />
+          <div className="label">One-Liner</div>
+          <p style={{ fontSize: '.95rem', marginTop: '.25rem' }}>{one_liner}</p>
         </div>
-        <div>
-          <div className="label">Authors</div>
-          <div>{total_authors ?? 0} {total_authors === 1 ? 'author' : 'authors'}</div>
-        </div>
-      </div>
 
-      <Section title="One-line Summary">
-        <p>{one_liner}</p>
-      </Section>
-      <Section title="Problems Solved" items={problems_solved} />
-      <Section title="Key Innovations" items={key_innovations} />
-      <Section title="Collaboration Type">
-        <p>{collaboration_type || 'Unknown'}</p>
-        {authors?.length ? <details><summary>Authors</summary><ul>{authors.map((a,i)=>(<li key={i}>{a}</li>))}</ul></details> : null}
-      </Section>
-      <Section title="Takeaways" items={takeaways} />
-      {notes?.length ? <Section title="Things to Note" items={notes} /> : null}
+        {simplified_summary && (
+          <div className="card section" style={{ gridColumn: '1 / -1' }}>
+            <h2>Simplified Summary</h2>
+            <p style={{ whiteSpace: 'pre-wrap' }}>{simplified_summary}</p>
+          </div>
+        )}
+        {practical_problem && (
+          <div className="card section">
+            <h2>Practical Problem</h2>
+            <p>{practical_problem}</p>
+          </div>
+        )}
+        <div className="card section">
+          <h2>Problems Solved</h2>
+          <List items={problems_solved} />
+        </div>
+        <div className="card section">
+          <h2>Key Innovations</h2>
+          <List items={key_innovations} />
+        </div>
+        {impact_potential?.length ? (
+          <div className="card section">
+            <h2>Impact Potential</h2>
+            <List items={impact_potential} />
+          </div>
+        ) : null}
+        {use_cases?.length ? (
+          <div className="card section">
+            <h2>Use Cases</h2>
+            <List items={use_cases} />
+          </div>
+        ) : null}
+        {benchmarks?.length ? (
+          <div className="card section" style={{ gridColumn: '1 / -1' }}>
+            <h2>Benchmarks</h2>
+            <table className="benchmarks">
+              <thead>
+                <tr><th>Metric</th><th>Value</th><th>Baseline</th><th>Improvement</th></tr>
+              </thead>
+              <tbody>
+                {benchmarks.map((b,i)=>(
+                  <tr key={i}>
+                    <td>{b.metric}</td>
+                    <td>{b.value || '—'}</td>
+                    <td>{b.baseline || '—'}</td>
+                    <td>{b.improvement || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        <div className="card section">
+          <h2>Takeaways</h2>
+          <List items={takeaways} />
+        </div>
+        {notes?.length ? (
+          <div className="card section">
+            <h2>Limitations / Notes</h2>
+            <List items={notes} />
+          </div>
+        ) : null}
+        {(hasCode || hasVideo || hasCheckpoints) && (
+          <div className="card section">
+            <h2>Resources</h2>
+            <div className="resource-row">
+              {resources.code?.map((l,i)=>(<a className="chip ok" key={'c'+i} href={l} target="_blank" rel="noreferrer">Code {i+1}</a>))}
+              {resources.video?.map((l,i)=>(<a className="chip ok" key={'v'+i} href={l} target="_blank" rel="noreferrer">Video {i+1}</a>))}
+              {resources.checkpoints?.map((l,i)=>(<a className="chip ok" key={'m'+i} href={l} target="_blank" rel="noreferrer">Model {i+1}</a>))}
+            </div>
+          </div>
+        )}
+        {(overall_score != null || reliability_score != null || applicability_score != null) && (
+          <div className="card section">
+            <h2>Scores</h2>
+            <div className="scores">
+              {overall_score != null && <Score label="Overall" value={overall_score} />}
+              {reliability_score != null && <Score label="Reliability" value={reliability_score} />}
+              {applicability_score != null && <Score label="Applicability" value={applicability_score} />}
+            </div>
+          </div>
+        )}
+        {authors_affiliations?.length ? (
+          <div className="card section" style={{ gridColumn: '1 / -1' }}>
+            <h2>Authorship & Collaboration</h2>
+            {affiliation_breakdown && (
+              <div className="chips" style={{ marginBottom: '.6rem' }}>
+                <span className="chip">Academia {affiliation_breakdown.Academia}</span>
+                <span className="chip">Industry {affiliation_breakdown.Industry}</span>
+                <span className="chip">Other {affiliation_breakdown.Other}</span>
+                <span className="chip">Total {total_authors}</span>
+              </div>
+            )}
+            <details>
+              <summary>Affiliation Groups</summary>
+              <div className="aff-groups" style={{ marginTop: '.6rem' }}>
+                {groupedAffiliations.map(([aff, names]) => (
+                  <div key={aff} className="aff-group">
+                    <strong>{aff}</strong>
+                    <span>{names.join(', ')}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+        ) : null}
     </div>
   )
 }
-
-function Section({ title, items, children }) {
+function List({ items }) {
+  if (!items?.length) return <p style={{ opacity: 0.6 }}>—</p>
   return (
-    <div style={{ marginTop: '1rem' }}>
-      <div className="label">{title}</div>
-      {items ? (
-        <ul className="summary">
-          {items.map((it, idx) => <li key={idx}>{it}</li>)}
-        </ul>
-      ) : (
-        <div className="summary">{children}</div>
-      )}
+    <ul className="summary">
+      {items.map((it, idx) => <li key={idx}>{it}</li>)}
+    </ul>
+  )
+}
+
+function Score({ label, value }) {
+  const pct = Math.max(0, Math.min(100, value))
+  return (
+    <div className="score meter chip" style={{ '--pct': pct + '%' }}>
+      <div className="score-bar"><span style={{ '--pct': pct + '%' }} /></div>
+      {label}: {pct}
     </div>
   )
 }
