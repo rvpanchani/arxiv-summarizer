@@ -28,6 +28,17 @@ type ArxivMeta = {
   modelLinks: string[]
 }
 
+function parseCitationMeta(html: string): { authors: string[]; authorsDetailed: { name: string; affiliation?: string | null; category: 'Academia' | 'Industry' | 'Other' }[] } {
+  const citationAuthors = [...html.matchAll(/<meta[^>]+name="citation_author"[^>]+content="([^"]+)"/gi)]
+  const citationInstitutions = [...html.matchAll(/<meta[^>]+name="citation_author_institution"[^>]+content="([^"]+)"/gi)]
+  const authors = citationAuthors.map(m => m[1].replace(/\s+/g, ' ').trim()).filter(Boolean)
+  const authorsDetailed = authors.map((name, idx) => {
+    const affiliation = citationInstitutions[idx]?.[1]?.replace(/\s+/g, ' ').trim() || null
+    return { name, affiliation, category: categorizeAffiliation(affiliation) }
+  })
+  return { authors, authorsDetailed }
+}
+
 async function fetchArxivMeta(url: string): Promise<ArxivMeta> {
   const id = extractArxivId(url)
   let title: string | null = null
@@ -66,6 +77,17 @@ async function fetchArxivMeta(url: string): Promise<ArxivMeta> {
     })
     absUrl = `https://arxiv.org/abs/${id}`
     pdfUrl = `https://arxiv.org/pdf/${id}.pdf`
+    if (!authorsDetailed.some(author => author.affiliation)) {
+      try {
+        const res = await fetch(absUrl)
+        const html = await res.text()
+        const parsed = parseCitationMeta(html)
+        if (parsed.authors.length) {
+          authors = parsed.authors
+          authorsDetailed = parsed.authorsDetailed
+        }
+      } catch {}
+    }
   } else {
     // Fallback to abs HTML extraction
     try {
@@ -81,10 +103,22 @@ async function fetchArxivMeta(url: string): Promise<ArxivMeta> {
         if (mTitle) title = mTitle[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
         const m2 = html.match(/<blockquote class="abstract[^"]*">\s*<span[^>]*>.*?<\/span>([\s\S]*?)<\/blockquote>/i)
         if (m2) abstract = m2[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
-        const aMatches = [...html.matchAll(/<div class="authors">[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/gi)]
-        if (aMatches.length) {
-          authors = aMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean)
-          authorsDetailed = authors.map(name => ({ name, affiliation: null, category: 'Other' }))
+        const parsedMeta = parseCitationMeta(html)
+        if (parsedMeta.authors.length) {
+          authors = parsedMeta.authors
+          authorsDetailed = parsedMeta.authorsDetailed
+        }
+        if (!authors.length) {
+          const aMatches = [...html.matchAll(/<div class="authors">[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/gi)]
+          if (aMatches.length) {
+            authors = aMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean)
+            const affiliationMatches = [...html.matchAll(/class="author-affiliation"[^>]*>([\s\S]*?)<\/[^>]+>/gi)]
+            const affiliations = affiliationMatches.map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+            authorsDetailed = authors.map((name, idx) => {
+              const affiliation = affiliations[idx] || null
+              return { name, affiliation, category: categorizeAffiliation(affiliation) }
+            })
+          }
         }
         // Resource links
         const linkMatches = [...html.matchAll(/<a[^>]+href="(https?:[^"#]+)"/gi)]
@@ -205,8 +239,8 @@ function buildPrompt(paperMeta: ArxivMeta): string {
 function categorizeAffiliation(aff?: string | null): 'Academia' | 'Industry' | 'Other' {
   if (!aff) return 'Other'
   const a = aff.toLowerCase()
-  if (/(univ|institute|college|school|laborator|centre|center)/.test(a)) return 'Academia'
-  if (/(inc|corp|labs|technolog|systems|company|ltd|llc|google|microsoft|meta|ibm|amazon|nvidia|openai|deepmind)/.test(a)) return 'Industry'
+  if (/(univ|university|institute of technology|polytechnic|college|school|academy|faculty|department|laborator|laboratory|centre|center)/.test(a)) return 'Academia'
+  if (/(inc|corp|corporation|labs|laboratories|technolog|systems|company|co\.|ltd|llc|gmbh|s\.a\.|plc|holdings|group|enterprise|ventures|solutions|consulting|industries|google|microsoft|meta|ibm|amazon|nvidia|openai|deepmind|bytedance|tencent|alibaba|huawei|salesforce|sap|oracle|intel|qualcomm|apple|sony|samsung)/.test(a)) return 'Industry'
   return 'Other'
 }
 
